@@ -136,9 +136,12 @@ class LightningProgram(LightningFabricMixin):
             print(report)
             return report
         elif isinstance(merged_model, Dict):
-            model = merged_model.pop("model")
-            report: dict = taskpool.evaluate(model)
-            report.update(merged_model)
+            if "model" in merged_model:
+                model = merged_model.pop("model")
+                report: dict = taskpool.evaluate(model)
+                report.update(merged_model)
+            else:
+                report = taskpool.evaluate(merged_model)  # handle multi-model compression within taskpools
             print(report)
             return report
         elif isinstance(merged_model, Iterable):

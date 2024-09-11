@@ -147,7 +147,7 @@ class CLIPImageClassificationTaskPool(TaskPool):
 
         return task
 
-    def evaluate(self, model: CLIPVisionModel):
+    def evaluate(self, model: CLIPVisionModel | dict):
         """
         Evaluate the model on the image classification task.
         """
@@ -155,24 +155,47 @@ class CLIPImageClassificationTaskPool(TaskPool):
         if self._fabric is None and torch.cuda.is_available():
             self._fabric = L.Fabric(devices=1)
             self._fabric.launch()
+        if isinstance(model, CLIPVisionModel):
+            # CLIPVisionModel works the same with CLIPVisonTransformer, so we can use it directly
+            print("yyyyy:", type(model))
+            self.clip_model.vision_model = model
+            report = {}
+            training_params, all_params = count_parameters(model)
+            report["model_info"] = {
+                "trainable_params": training_params,
+                "all_params": all_params,
+                "trainable_percentage": training_params / all_params,
+            }
+            for task_name in tqdm(self.task_names, desc="Evaluating tasks"):
+                task = self.load_task(task_name)
+                result = task.evaluate(self.clip_model)
+                report[task_name] = result
+            log.info(f"Results for taskpool {self.config.name}: {report}")
+            if self._fabric.is_global_zero and len(self._fabric._loggers) > 0:
+                with open(
+                    os.path.join(self._fabric.logger.log_dir, "report.json"), "w"
+                ) as fp:
+                    json.dump(report, fp)
+            return report
+        elif isinstance(model, dict):  # for multi-model compression
+            report = {task_name: {} for task_name in model}
+            for task_name in tqdm(self.task_names, desc="Evaluating tasks"):
+                task = self.load_task(task_name)    
 
-        # CLIPVisionModel works the same with CLIPVisonTransformer, so we can use it directly
-        self.clip_model.vision_model = model
-        report = {}
-        training_params, all_params = count_parameters(model)
-        report["model_info"] = {
-            "trainable_params": training_params,
-            "all_params": all_params,
-            "trainable_percentage": training_params / all_params,
-        }
-        for task_name in tqdm(self.task_names, desc="Evaluating tasks"):
-            task = self.load_task(task_name)
-            result = task.evaluate(self.clip_model)
-            report[task_name] = result
-        log.info(f"Results for taskpool {self.config.name}: {report}")
-        if self._fabric.is_global_zero and len(self._fabric._loggers) > 0:
-            with open(
-                os.path.join(self._fabric.logger.log_dir, "report.json"), "w"
-            ) as fp:
-                json.dump(report, fp)
-        return report
+                self.clip_model.vision_model = model[task_name]
+                training_params, all_params = count_parameters(model[task_name])
+                report[task_name]["model_info"] = {
+                    "trainable_params": training_params,
+                    "all_params": all_params,
+                    "trainable_percentage": training_params / all_params,
+                }
+
+                result = task.evaluate(self.clip_model)
+                report[task_name] = result
+            log.info(f"Results for taskpool {self.config.name}: {report}")
+            if self._fabric.is_global_zero and len(self._fabric._loggers) > 0:
+                with open(
+                    os.path.join(self._fabric.logger.log_dir, "report.json"), "w"
+                ) as fp:
+                    json.dump(report, fp)
+            return report

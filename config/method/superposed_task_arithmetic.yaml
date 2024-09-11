@@ -1,0 +1,3 @@
+name: superposed_task_arithmetic
+scaling_factor: 0.5
+mode: random_binary_diagonal_matrix
